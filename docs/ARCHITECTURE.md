@@ -26,6 +26,52 @@ This project demonstrates a complete Zero Trust architecture designed for organi
 │  │ RESOURCE GROUP: rg-zt-prod                                                                  │  │
 │  │                                                                                             │  │
 │  │  ┌──────────────────────────────────────────────────────────────────────────────────────┐    │  │
+│  │  │ VIRTUAL NETWORKS (VNet Peering)                                                      │    │  │
+│  │  │                                                                                          │    │  │
+│  │  │     ╔═══════════════╗        ╔═══════════════╗        ╔═══════════════╗              │    │  │
+│  │  │     ║  Hub VNet    ║◄──────►║ AKS Spoke VNet║◄──────►║Data Spoke VNet║              │    │  │
+│  │  │     ║  10.0.0.0/16 ║   ▲    ║  10.1.0.0/16 ║   ▲    ║  10.2.0.0/16 ║              │    │  │
+│  │  │     ║               ║   │    ║               ║   │    ║               ║              │    │  │
+│  │  │     ║┌────────────┐║   │    ║┌────────────┐║   │    ║┌────────────┐║              │    │  │
+│  │  │     ║│  Azure    │║   │    ║│   AKS     │║   │    ║│  Private  │║              │    │  │
+│  │  │     ║│ Firewall  │║   │    ║│  Cluster  │║   │    ║│ Endpoints │║              │    │  │
+│  │  │     ║│10.20.1.4 │║   │    ║│10.21.0.0/24║   │    ║│ (KV,ACR) │║              │    │  │
+│  │  │     ║└────────────┘║   │    ║└────────────┘║   │    ║└────────────┘║              │    │  │
+│  │  │     ║┌────────────┐║   │    ║┌────────────┐║   │    ╚═══════════════╝              │    │  │
+│  │  │     ║│ Tailscale │║───┴────►║┌────────────┐║   │         ▲                          │    │  │
+│  │  │     ║│    VM     │║        ║│ Pods       │║   │         │                          │    │  │
+│  │  │     ║└────────────┘║        ║└────────────┘║   │         │                          │    │  │
+│  │  │     ╚══════════════╝        ╚══════════════╝   │         │                          │    │  │
+│  │  │                                      ▲          │         │                          │    │  │
+│  │  │                                      │          │         │                          │    │  │
+│  │  │  ══════════════════════════════════════════════╪═════════╪═══════════════════════════╪════│    │  │
+│  │  │           VNET PEERING TRANSIT                 │  Hub routes all traffic            │    │  │
+│  │  └──────────────────────────────────────────────────────────────────────────────────────┘    │  │
+│  │                                                                                             │  │
+│  │  ┌──────────────────────────────────────────────────────────────────────────────────────┐    │  │
+│  │  │ TRAFFIC FLOWS                                                                          │    │  │
+│  │  │                                                                                          │    │  │
+│  │  │  Pod→KV:  Pod → AKS VNet → Hub VNet → Data VNet → Key Vault (Private Endpoint)       │    │  │
+│  │  │  Pod→Net: Pod → AKS VNet → Hub VNet → Firewall → Internet                            │    │  │
+│  │  │  Dev→AKS: Developer → Tailscale → Hub VNet → AKS API (Private)                       │    │  │
+│  │  └──────────────────────────────────────────────────────────────────────────────────────┘    │  │
+│  └─────────────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │ EXTERNAL CONNECTIONS                                                                         │  │
+│  │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐                  │  │
+│  │  │     GitHub       │    │  Developer       │    │    Internet     │                  │  │
+│  │  │    Repository    │    │   (Tailscale)   │    │    Egress       │                  │  │
+│  │  └──────────────────┘    └──────────────────┘    └──────────────────┘                  │  │
+│  └─────────────────────────────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    AZURE CLOUD (East US 2)                                         │
+│  ┌─────────────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │ RESOURCE GROUP: rg-zt-prod                                                                  │  │
+│  │                                                                                             │  │
+│  │  ┌──────────────────────────────────────────────────────────────────────────────────────┐    │  │
 │  │  │ VIRTUAL NETWORKS                                                                          │    │  │
 │  │  │                                                                                          │    │  │
 │  │  │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐                  │    │  │
@@ -122,10 +168,123 @@ The implementation uses a hub-spoke network topology for Zero Trust network segm
 
 ### VNet Peering
 
-All VNets are peered to enable private communication:
-- Hub ↔ AKS Spoke
-- Hub ↔ Data Spoke
-- AKS Spoke ↔ Data Spoke
+All VNets are peered to enable private communication with transitive routing:
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │            VNET PEERING CONFIG          │
+                    │                                         │
+   ┌───────────────┐│                                        │
+   │ Hub VNet      ││                                        │
+   │ 10.0.0.0/16  ││    ╔═══════════════════════════════╗  │
+   │               ││    ║   VNet Peering Connections    ║  │
+   │ • Firewall    │◄──►║                                ║  │
+   │ • Gateway     │    ║  Hub ↔ AKS Spoke (10.0↔10.1)  ║  │
+   │ • Mgmt        │    ║  Hub ↔ Data Spoke  (10.0↔10.2) ║  │
+   └───────────────┘    ║  AKS ↔ Data Spoke  (10.1↔10.2)  ║  │
+                        ║                                ║  │
+   ┌───────────────┐    ╚═══════════════════════════════╝  │
+   │ AKS Spoke     │◄──────────────────────────────────────│
+   │ 10.1.0.0/16   ││                                        │
+   │               ││    TRANSITIVE ROUTING:                 │
+   │ • AKS Nodes   ││    • Hub serves as transit router    │
+   │ • Pods        ││    • AKS→Data via Hub (no direct)    │
+   │ • Services    ││    • Firewall inspects all egress    │
+   └───────────────┘    │                                        │
+                        └────────────────────────────────────────┘
+
+   ┌───────────────┐
+   │ Data Spoke    │
+   │ 10.2.0.0/16   │
+   │               │
+   │ • Key Vault   │
+   │ • ACR         │
+   │ • Storage     │
+   └───────────────┘
+```
+
+#### Peering Configuration Details
+
+| Peering Name | From VNet | To VNet | Allow Transit | Use Forwarded Traffic |
+|-------------|-----------|---------|---------------|----------------------|
+| hub-to-aks | vnet-hub-prod | vnet-aks-prod | Yes | Yes |
+| aks-to-hub | vnet-aks-prod | vnet-hub-prod | No | Yes |
+| hub-to-data | vnet-hub-prod | vnet-data-prod | Yes | Yes |
+| data-to-hub | vnet-data-prod | vnet-hub-prod | No | Yes |
+| aks-to-data | vnet-aks-prod | vnet-data-prod | No | Yes |
+| data-to-aks | vnet-data-prod | vnet-aks-prod | No | No |
+
+### Network Security Groups (NSG)
+
+NSGs are applied at the subnet level to control traffic flow across VNet peering:
+
+| NSG | Subnet | Inbound Rules | Outbound Rules |
+|-----|--------|--------------|-----------------|
+| nsg-aks-system | snet-aks-system | Allow from Hub, Allow from Data | Allow to Hub, Allow to Data, Allow Internet (via Firewall) |
+| nsg-aks-workload | snet-aks-workload | Allow from Hub, Allow from AKS system | Allow to Hub, Allow to Data, Allow Internet (via Firewall) |
+| nsg-mgmt | snet-mgmt | Allow from Tailscale subnet | Allow to AKS, Allow to Data |
+| nsg-pe | snet-pe | Allow from Hub, Allow from AKS | Allow to Hub |
+
+#### NSG Security Rules
+
+```hcl
+# Example: AKS Workload NSG
+resource "azurerm_network_security_group" "aks-workload" {
+  name = "nsg-aks-workload"
+  
+  security_rule {
+    name                       = "Allow-Ingress-From-Hub"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                    = "*"
+    source_address_prefix      = "10.0.0.0/16"  # Hub VNet
+    destination_address_prefix = "10.1.1.0/24"  # Workload subnet
+  }
+  
+  security_rule {
+    name                       = "Allow-Egress-To-Data"
+    priority                   = 110
+    direction                  = "Outbound"
+    access                     = "Allow"
+    protocol                    = "*"
+    source_address_prefix      = "10.1.1.0/24"  # Workload subnet
+    destination_address_prefix = "10.2.0.0/16"  # Data VNet
+  }
+  
+  security_rule {
+    name                       = "Deny-All-Inbound"
+    priority                   = 4096
+    direction                  = "Inbound"
+    access                     = "Deny"
+    protocol                    = "*"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+}
+```
+
+#### Traffic Flow Examples
+
+| Source | Destination | Path |
+|--------|------------|------|
+| AKS Pod → Key Vault | Private Endpoint | AKS → Hub (peering) → Data (peering) → Key Vault |
+| AKS Pod → Internet | via Firewall | AKS → Hub → Firewall → Internet |
+| AKS Pod → ACR | Private Endpoint | AKS → Hub (peering) → Data (peering) → ACR |
+| Developer → AKS API | via Tailscale | Tailscale VM → Hub → AKS API Server |
+| GitHub Actions → Terraform | via OIDC | Internet → Hub → Private Endpoint |
+
+#### DNS Resolution
+
+- **Private DNS Zones**: Azure Private Link resources use private DNS zones
+- **VNet Integration**: DNS zones linked to all three VNets
+- **Resolution**: Components resolve to private IPs, not public endpoints
+
+| Service | Private DNS Zone | Record |
+|---------|-----------------|--------|
+| Key Vault | `privatelink.vaultcore.azure.net` | `kv-zt-prod.vaultcore.azure.net` |
+| ACR | `privatelink.azurecr.io` | `acrztprod.azurecr.io` |
+| Storage | `privatelink.blob.core.windows.net` | `stztprod.blob.core.windows.net` |
 
 ---
 
