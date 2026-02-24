@@ -1,0 +1,87 @@
+#cloud-config
+# Tailscale Access VM Initialization
+# Installs essential tools for AKS cluster management
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - wget
+  - git
+  - jq
+  - unzip
+  - apt-transport-https
+  - ca-certificates
+  - gnupg
+  - lsb-release
+
+runcmd:
+  # Install Azure CLI
+  - curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+
+  # Install kubectl
+  - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+  - install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+  - rm kubectl
+
+  # Install Helm
+  - curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+  # Install ArgoCD CLI
+  - curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+  - chmod +x /usr/local/bin/argocd
+
+  # Install Tailscale
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list
+  - apt-get update
+  - apt-get install -y tailscale
+
+  # Enable IP forwarding for Tailscale subnet routing
+  - echo 'net.ipv4.ip_forward = 1' | tee -a /etc/sysctl.conf
+  - echo 'net.ipv6.conf.all.forwarding = 1' | tee -a /etc/sysctl.conf
+  - sysctl -p /etc/sysctl.conf
+
+  # Start Tailscale with auth key
+  - |
+    if [ -n "${tailscale_authkey}" ]; then
+      tailscale up --authkey=${tailscale_authkey} --advertise-routes=10.0.0.0/8 --accept-routes --ssh
+    else
+      systemctl enable --now tailscaled
+      echo "Tailscale installed. Run 'sudo tailscale up --advertise-routes=10.0.0.0/8 --accept-routes --ssh' to connect"
+    fi
+
+  # Create welcome message
+  - |
+    cat > /etc/motd << 'EOF'
+    ╔══════════════════════════════════════════════════════════════╗
+    ║            Tailscale Access Gateway - ${environment}                  
+    ║  Zero Trust Architecture - Private AKS Cluster Access        ║
+    ╚══════════════════════════════════════════════════════════════╝
+
+    Installed Tools:
+      ✓ Azure CLI (az)
+      ✓ kubectl
+      ✓ Helm
+      ✓ ArgoCD CLI
+      ✓ Tailscale
+      ✓ jq, git, curl
+
+    Quick Start:
+      1. Connect Tailscale (if not auto-configured):
+         sudo tailscale up --advertise-routes=10.0.0.0/8 --accept-routes --ssh
+
+      2. Login to Azure:
+         az login
+
+      3. Get AKS credentials:
+         az aks get-credentials --resource-group rg-zt-${environment} --name aks-zt-${environment}
+
+      4. Verify cluster access:
+         kubectl get nodes
+
+    Documentation: https://tailscale.com/kb/1019/subnets/
+    EOF
+
+final_message: "Tailscale VM initialized successfully. Connect via Tailscale SSH or Azure CLI."

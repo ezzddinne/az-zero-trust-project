@@ -1,0 +1,26 @@
+# =============================================================
+# Kustomize Base — Core Kubernetes Resources
+# =============================================================
+# This defines the base configuration shared across all environments.
+# Environment-specific values are patched via overlays.
+# =============================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespaces/namespaces.yaml
+  - network-policies/network-policies.yaml
+  - rbac/rbac.yaml
+  - resource-quotas/resource-quotas.yaml
+  - sample-app/deployment.yaml
+  - secrets-store/secret-provider-class.yaml
+
+# NOTE: Do NOT set a global namespace here.
+# Resources already declare their own namespaces (workloads, monitoring, ingress, falco-system).
+# A global namespace would override all of them.
+
+# Common labels
+commonLabels:
+  managed-by: kustomize
+  zero-trust: "true"

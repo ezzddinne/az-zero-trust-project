@@ -1,0 +1,18 @@
+# =============================================================
+# ConfigMap Reference — Terraform Outputs
+# =============================================================
+# This references the ConfigMap created by sync-terraform-outputs script
+# The ConfigMap must exist before ArgoCD can sync this overlay
+# =============================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: terraform-outputs-staging
+  namespace: workloads
+  labels:
+    app: zero-trust
+    environment: staging
+    managed-by: terraform
+# Data is populated by scripts/sync-terraform-outputs.ps1 or .sh
+# ArgoCD will use this as a source for Kustomize replacements

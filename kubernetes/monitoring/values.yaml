@@ -1,0 +1,61 @@
+prometheusOperator:
+  nodeSelector:
+    agentpool: "system"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  admissionWebhooks:
+    patch:
+      nodeSelector:
+        agentpool: "system"
+      tolerations:
+        - key: "CriticalAddonsOnly"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+prometheus:
+  prometheusSpec:
+    nodeSelector:
+      agentpool: "system"
+    tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+
+grafana:
+  nodeSelector:
+    agentpool: "system"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  persistence:
+    enabled: true
+    storageClassName: "managed"
+    accessMode: ReadWriteOnce
+    size: 10Gi
+    existingClaim: ""
+
+alertmanager:
+  alertmanagerSpec:
+    nodeSelector:
+      agentpool: "system"
+    tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+
+kube-state-metrics:
+  nodeSelector:
+    agentpool: "system"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+prometheus-node-exporter:
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"

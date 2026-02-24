@@ -1,0 +1,95 @@
+# =============================================================
+# RBAC — Namespace-scoped access for developers
+# Zero Trust: Least Privilege — scoped to namespace
+# =============================================================
+
+# ClusterRole: Developer (read pods, logs, exec restricted)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zt-developer
+  labels:
+    zero-trust: "true"
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  # Explicitly NO: pods/exec, secrets, persistent volumes
+---
+# ClusterRole: Security Auditor (read-only across cluster)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zt-security-auditor
+  labels:
+    zero-trust: "true"
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "pods", "services", "configmaps", "serviceaccounts"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets", "podsecuritypolicies"]
+    verbs: ["get", "list", "watch"]
+  # Explicitly NO: secrets, exec, delete
+---
+# RoleBinding: Developers in workloads namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developers-workloads
+  namespace: workloads
+  labels:
+    zero-trust: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: zt-developer
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: "zt-dev-aks-developers"  # Entra ID group name
+---
+# ClusterRoleBinding: Security auditors (cluster-wide read)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: security-auditors
+  labels:
+    zero-trust: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: zt-security-auditor
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: "zt-dev-security-readers"  # Entra ID group name
+---
+# ServiceAccount for sample-api workload identity
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-sample-api
+  namespace: workloads
+  annotations:
+    # Azure Workload Identity: link to Entra ID app
+    # This placeholder is replaced by Kustomize overlay patches
+    azure.workload.identity/client-id: "REPLACE_WITH_WORKLOAD_IDENTITY_CLIENT_ID"
+  labels:
+    azure.workload.identity/use: "true"
+    zero-trust: "true"

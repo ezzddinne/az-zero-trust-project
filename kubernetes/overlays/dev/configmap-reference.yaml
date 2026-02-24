@@ -1,0 +1,24 @@
+# =============================================================
+# ConfigMap Reference — Terraform Outputs
+# =============================================================
+# This references the ConfigMap created by sync-terraform-outputs script
+# The ConfigMap must exist before ArgoCD can sync this overlay
+# =============================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: terraform-outputs-dev
+  namespace: workloads
+  labels:
+    app: zero-trust
+    environment: dev
+    managed-by: terraform
+# Data is populated by scripts/sync-terraform-outputs.ps1 or .sh
+# ArgoCD will use this as a source for Kustomize replacements
+data:
+  ACR_LOGIN: "acrztdeve85d83.azurecr.io"
+  KV_NAME: "kv-zt-dev-e85d83"
+  CLIENT_ID: "62062027-2e4d-4bba-bd41-7f8ae8dd34c3"
+  TENANT_ID: "2538d496-062c-4cae-a709-a24873f4a14c"
+  ENVIRONMENT: "dev"

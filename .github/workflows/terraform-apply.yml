@@ -1,0 +1,146 @@
+# =============================================================
+# Terraform Apply — Infrastructure Deployment
+# Runs on: Push to main (after PR merge)
+# Auth: OIDC (no stored secrets)
+# =============================================================
+
+name: "Terraform Apply"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-apply.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ARM_USE_OIDC: true
+  TF_VERSION: "1.6.0"
+
+jobs:
+  detect-environment:
+    name: "Detect Changed Environment"
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.detect.outputs.environments }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed environments
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "environments=[\"${{ github.event.inputs.environment }}\"]" >> $GITHUB_OUTPUT
+          else
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+            echo "Changed files: $CHANGED_FILES"
+            ENVIRONMENTS="[]"
+            
+            # Check for environment-specific changes
+            if echo "$CHANGED_FILES" | grep -q "terraform/environments/dev/"; then
+              ENVIRONMENTS=$(echo $ENVIRONMENTS | jq -c '. + ["dev"]')
+            fi
+            if echo "$CHANGED_FILES" | grep -q "terraform/environments/staging/"; then
+              ENVIRONMENTS=$(echo $ENVIRONMENTS | jq -c '. + ["staging"]')
+            fi
+            if echo "$CHANGED_FILES" | grep -q "terraform/environments/prod/"; then
+              ENVIRONMENTS=$(echo $ENVIRONMENTS | jq -c '. + ["prod"]')
+            fi
+            
+            # If no env-specific changes detected, deploy to prod (production priority)
+            # Use workflow_dispatch to manually select different environments
+            if [ "$ENVIRONMENTS" = "[]" ]; then
+              echo "No environment-specific changes detected. Defaulting to prod."
+              ENVIRONMENTS='["prod"]'
+            fi
+            
+            echo "Detected environments: $ENVIRONMENTS"
+            echo "environments=$ENVIRONMENTS" >> $GITHUB_OUTPUT
+          fi
+
+  apply:
+    name: "Apply (${{ matrix.environment }})"
+    runs-on: ubuntu-latest
+    needs: detect-environment
+    environment: ${{ matrix.environment }}
+    strategy:
+      matrix:
+        environment: ${{ fromJson(needs.detect-environment.outputs.environments) }}
+      fail-fast: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: terraform/environments/${{ matrix.environment }}
+        env:
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          terraform init \
+            -backend-config=backend.hcl \
+            -input=false
+
+      - name: Terraform Plan
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: |
+          terraform plan \
+            -input=false \
+            -out=tfplan
+        env:
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Apply
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: |
+          terraform apply \
+            -input=false \
+            -auto-approve \
+            tfplan
+        env:
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Output Summary
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: |
+          echo "## Terraform Apply Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ matrix.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**AKS Cluster:** $(terraform output -raw aks_cluster_name 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "**ACR:** $(terraform output -raw acr_login_server 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "**Key Vault:** $(terraform output -raw key_vault_name 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY

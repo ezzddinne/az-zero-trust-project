@@ -1,0 +1,159 @@
+# =============================================================
+# Terraform Plan — PR Validation Pipeline
+# Runs on: Pull requests targeting main
+# Auth: OIDC (no stored secrets)
+# =============================================================
+
+name: "Terraform Plan"
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-plan.yml"
+
+permissions:
+  id-token: write   # OIDC token
+  contents: read     # Checkout
+  pull-requests: write  # PR comments
+
+env:
+  ARM_USE_OIDC: true
+  TF_VERSION: "1.6.0"
+
+jobs:
+  # ----- Security Scanning -----
+  security-scan:
+    name: "IaC Security Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: sarif
+          soft_fail: false
+          skip_check: CKV_AZURE_35  # Skip if justified in security-decisions.md
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform/
+          soft_fail: false
+
+  # ----- Detect Changed Environments -----
+  detect-environment:
+    name: "Detect Changed Environment"
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.detect.outputs.environments }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed environments
+        id: detect
+        run: |
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }})
+          ENVIRONMENTS="[]"
+          
+          if echo "$CHANGED_FILES" | grep -q "terraform/environments/dev/"; then
+            ENVIRONMENTS=$(echo $ENVIRONMENTS | jq -c '. + ["dev"]')
+          fi
+          if echo "$CHANGED_FILES" | grep -q "terraform/environments/staging/"; then
+            ENVIRONMENTS=$(echo $ENVIRONMENTS | jq -c '. + ["staging"]')
+          fi
+          if echo "$CHANGED_FILES" | grep -q "terraform/environments/prod/"; then
+            ENVIRONMENTS=$(echo $ENVIRONMENTS | jq -c '. + ["prod"]')
+          fi
+          
+          # If no environment-specific changes, check all environments
+          if [ "$ENVIRONMENTS" = "[]" ]; then
+            ENVIRONMENTS='["dev","staging","prod"]'
+          fi
+          
+          echo "Detected environments: $ENVIRONMENTS"
+          echo "environments=$ENVIRONMENTS" >> $GITHUB_OUTPUT
+
+  # ----- Terraform Plan (per environment) -----
+  plan:
+    name: "Plan (${{ matrix.environment }})"
+    runs-on: ubuntu-latest
+    needs: [security-scan, detect-environment]
+    strategy:
+      matrix:
+        environment: ${{ fromJson(needs.detect-environment.outputs.environments) }}
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: terraform/environments/${{ matrix.environment }}
+        env:
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          terraform init \
+            -backend-config=backend.hcl \
+            -input=false
+
+      - name: Terraform Validate
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: |
+          terraform plan \
+            -input=false \
+            -no-color \
+            -out=tfplan \
+            2>&1 | tee plan_output.txt
+
+      - name: Comment Plan on PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/environments/${{ matrix.environment }}/plan_output.txt', 'utf8');
+            const truncated = plan.length > 60000 ? plan.substring(0, 60000) + '\n... truncated' : plan;
+
+            const body = `### Terraform Plan: \`${{ matrix.environment }}\`
+
+            \`\`\`
+            ${truncated}
+            \`\`\`
+
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-api
+  namespace: workloads
+spec:
+  replicas: 3  # Staging uses more replicas
+  template:
+    spec:
+      containers:
+        - name: api
+          image: REPLACE_WITH_ACR_LOGIN_SERVER/sample-api:latest

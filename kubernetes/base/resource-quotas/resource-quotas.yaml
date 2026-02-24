@@ -1,0 +1,162 @@
+# =============================================================
+# Resource Quotas & Limit Ranges
+# Protects system components when workloads share system pool
+# =============================================================
+# Current cluster capacity: 1 node × 2 vCPU × 8 GB = 2 vCPU, 8 GB RAM
+# System overhead (kubelet, OS, kube-system): ~0.5 vCPU, ~2 GB RAM
+# Available for user pods: ~1.5 vCPU, ~6 GB RAM
+# =============================================================
+
+---
+# Workloads Namespace - Application Pods
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: workloads-quota
+  namespace: workloads
+spec:
+  hard:
+    requests.cpu: "800m"       # Max 800m vCPU requests (primary workload allocation)
+    requests.memory: "2Gi"     # Max 2 GB memory requests
+    limits.cpu: "1200m"        # Max 1.2 vCPU limits (with burst)
+    limits.memory: "3Gi"       # Max 3 GB memory limits
+    pods: "15"                 # Max 15 pods
+    services: "8"              # Max 8 services
+    persistentvolumeclaims: "5" # Max 5 PVCs
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: workloads-limits
+  namespace: workloads
+spec:
+  limits:
+  # Default limits for containers without resource specs
+  - default:
+      cpu: "150m"
+      memory: "384Mi"
+    defaultRequest:
+      cpu: "50m"
+      memory: "128Mi"
+    max:
+      cpu: "600m"       # No single container > 600m vCPU
+      memory: "1Gi"      # No single container > 1 GB
+    min:
+      cpu: "10m"
+      memory: "32Mi"
+    type: Container
+  # Pod-level limits
+  - max:
+      cpu: "800m"       # No single pod > 800m vCPU
+      memory: "2Gi"      # No single pod > 2 GB
+    type: Pod
+---
+# Monitoring Namespace - Prometheus, Grafana, Falco UI
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: monitoring-quota
+  namespace: monitoring
+spec:
+  hard:
+    requests.cpu: "400m"       # Max 400m vCPU requests
+    requests.memory: "1.5Gi"   # Max 1.5 GB memory requests
+    limits.cpu: "800m"         # Max 800m vCPU limits
+    limits.memory: "2Gi"       # Max 2 GB memory limits
+    pods: "12"                 # Max 12 pods
+    services: "6"              # Max 6 services
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: monitoring-limits
+  namespace: monitoring
+spec:
+  limits:
+  - default:
+      cpu: "100m"
+      memory: "256Mi"
+    defaultRequest:
+      cpu: "50m"
+      memory: "128Mi"
+    max:
+      cpu: "400m"       # Monitoring containers limited
+      memory: "768Mi"
+    min:
+      cpu: "25m"
+      memory: "64Mi"
+    type: Container
+  - max:
+      cpu: "600m"       # No single monitoring pod > 600m vCPU
+      memory: "1.5Gi"
+    type: Pod
+---
+# Falco System Namespace - Runtime Security
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: falco-quota
+  namespace: falco-system
+spec:
+  hard:
+    requests.cpu: "300m"       # Max 300m vCPU requests
+    requests.memory: "768Mi"   # Max 768 MB memory requests
+    limits.cpu: "500m"         # Max 500m vCPU limits
+    limits.memory: "1Gi"       # Max 1 GB memory limits
+    pods: "8"                  # Max 8 pods
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: falco-limits
+  namespace: falco-system
+spec:
+  limits:
+  - default:
+      cpu: "150m"
+      memory: "192Mi"
+    defaultRequest:
+      cpu: "75m"
+      memory: "96Mi"
+    max:
+      cpu: "300m"       # Falco DaemonSet per-node limit
+      memory: "512Mi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+    type: Container
+---
+# Ingress Namespace - Ingress Controllers
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ingress-quota
+  namespace: ingress
+spec:
+  hard:
+    requests.cpu: "200m"       # Max 200m vCPU requests
+    requests.memory: "512Mi"   # Max 512 MB memory requests
+    limits.cpu: "400m"         # Max 400m vCPU limits
+    limits.memory: "1Gi"       # Max 1 GB memory limits
+    pods: "8"                  # Max 8 pods
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ingress-limits
+  namespace: ingress
+spec:
+  limits:
+  - default:
+      cpu: "100m"
+      memory: "256Mi"
+    defaultRequest:
+      cpu: "50m"
+      memory: "128Mi"
+    max:
+      cpu: "500m"
+      memory: "1Gi"
+    min:
+      cpu: "10m"
+      memory: "32Mi"
+    type: Container

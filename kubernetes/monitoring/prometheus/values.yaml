@@ -1,0 +1,210 @@
+# Prometheus + Grafana Helm values
+# Deployed via: helm install prometheus prometheus-community/kube-prometheus-stack -n monitoring -f values.yaml
+
+# Global
+fullnameOverride: prometheus
+
+# Prometheus
+prometheus:
+  prometheusSpec:
+    # Schedule on monitoring or workload nodes
+    nodeSelector:
+      nodepool: workload
+    tolerations:
+      - key: "kubernetes.azure.com/scalesetpriority"
+        operator: "Equal"
+        value: "spot"
+        effect: "NoSchedule"
+      - key: "workload"
+        operator: "Equal"
+        value: "monitoring"
+        effect: "NoSchedule"
+
+    # Retention — keep 7 days (cost optimization)
+    retention: 7d
+    retentionSize: "5GB"
+
+    # Resource limits
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+
+    # Storage
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+    # Service monitors
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+
+# Grafana
+grafana:
+  enabled: true
+
+  nodeSelector:
+    nodepool: workload
+  tolerations:
+    - key: "kubernetes.azure.com/scalesetpriority"
+      operator: "Equal"
+      value: "spot"
+      effect: "NoSchedule"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Default admin password (change in production!)
+  adminPassword: "CHANGE-ME-IN-PRODUCTION"
+
+  # Dashboards
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          orgId: 1
+          folder: "Zero Trust"
+          type: file
+          options:
+            path: /var/lib/grafana/dashboards/default
+
+  dashboards:
+    default:
+      # Kubernetes cluster overview
+      kubernetes-cluster:
+        gnetId: 6417
+        revision: 1
+        datasource: Prometheus
+      # Kubernetes pods
+      kubernetes-pods:
+        gnetId: 6336
+        revision: 1
+        datasource: Prometheus
+      # Calico network policies
+      calico:
+        gnetId: 12175
+        revision: 5
+        datasource: Prometheus
+
+  # Grafana.ini settings
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s/"
+    security:
+      # Disable public signup
+      allow_sign_up: false
+    auth:
+      # Disable anonymous access
+      disable_login_form: false
+    analytics:
+      reporting_enabled: false
+      check_for_updates: false
+
+# Alertmanager
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    nodeSelector:
+      nodepool: workload
+    tolerations:
+      - key: "kubernetes.azure.com/scalesetpriority"
+        operator: "Equal"
+        value: "spot"
+        effect: "NoSchedule"
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
+# Node Exporter
+nodeExporter:
+  enabled: true
+
+# Kube State Metrics
+kubeStateMetrics:
+  enabled: true
+
+# Additional PrometheusRules for Zero Trust alerts
+additionalPrometheusRulesMap:
+  zero-trust-rules:
+    groups:
+      - name: zero-trust-security
+        rules:
+          # Alert: Pod running as root
+          - alert: PodRunningAsRoot
+            expr: |
+              kube_pod_container_info{container!=""}
+              * on(pod, namespace) group_left()
+              (kube_pod_container_status_running{} == 1)
+            for: 5m
+            labels:
+              severity: critical
+              category: security
+            annotations:
+              summary: "Pod {{ $labels.pod }} in {{ $labels.namespace }} may be running as root"
+
+          # Alert: Privileged container detected
+          - alert: PrivilegedContainer
+            expr: |
+              sum by (namespace, pod) (kube_pod_spec_containers_security_context_privileged{} == 1) > 0
+            for: 1m
+            labels:
+              severity: critical
+              category: security
+            annotations:
+              summary: "Privileged container in {{ $labels.namespace }}/{{ $labels.pod }}"
+
+          # Alert: NetworkPolicy missing in namespace
+          - alert: NamespaceMissingNetworkPolicy
+            expr: |
+              count by (namespace) (kube_networkpolicy_spec_podSelector{}) == 0
+              and on(namespace) kube_namespace_labels{namespace=~"workloads|ingress"}
+            for: 10m
+            labels:
+              severity: warning
+              category: security
+            annotations:
+              summary: "Namespace {{ $labels.namespace }} has no NetworkPolicies"
+
+          # Alert: Pod without resource limits
+          - alert: PodWithoutResourceLimits
+            expr: |
+              count by (namespace, pod) (
+                kube_pod_container_info{namespace="workloads"}
+                unless on(namespace, pod, container)
+                kube_pod_container_resource_limits{resource="memory"}
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+              category: security
+            annotations:
+              summary: "Pod {{ $labels.pod }} in {{ $labels.namespace }} missing resource limits"
+
+          # Alert: High error rate on API
+          - alert: HighApiErrorRate
+            expr: |
+              sum(rate(http_requests_total{status=~"5..",namespace="workloads"}[5m]))
+              / sum(rate(http_requests_total{namespace="workloads"}[5m])) > 0.05
+            for: 5m
+            labels:
+              severity: warning
+              category: availability
+            annotations:
+              summary: "API error rate exceeds 5%"

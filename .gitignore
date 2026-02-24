@@ -1,0 +1,71 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+*.hcl.lock
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Secrets — NEVER commit
+*.pem
+*.key
+*.crt
+*.pfx
+*.env
+.env.*
+secrets/
+**/secrets.yaml
+**/secrets.json
+*.secret
+*.password
+
+# SSH Keys
+argocd-ssh-key
+argocd-ssh-key.pub
+github_known_hosts
+known_hosts
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+~$*
+
+# IDE
+.vscode/settings.json
+.idea/
+*.iml
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Node.js
+node_modules/
+package-lock.json
+npm-debug.log
+yarn-error.log
+
+# Azure / Cloud
+*.publishsettings
+*.credentials
+*.azureprofile
+
+# Temp files
+*.tmp
+*.bak
+*.backup
+*.log

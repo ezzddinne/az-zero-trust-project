@@ -1,0 +1,89 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - configmap-reference.yaml
+
+commonLabels:
+  environment: prod
+
+patches:
+  - path: patches/sample-app-image.yaml
+    target:
+      kind: Deployment
+      name: sample-api
+  
+  - path: patches/secret-provider-class.yaml
+    target:
+      kind: SecretProviderClass
+      name: kv-secrets-workloads
+  
+  - path: patches/workload-identity.yaml
+    target:
+      kind: ServiceAccount
+      name: sa-sample-api
+
+  - path: patches/scale-replicas.yaml
+    target:
+      kind: Deployment
+      name: sample-api
+
+configMapGenerator:
+  - name: env-config
+    literals:
+      - ENVIRONMENT=prod
+      - LOG_LEVEL=error
+
+replacements:
+  - source:
+      kind: ConfigMap
+      name: terraform-outputs-prod
+      fieldPath: data.ACR_LOGIN
+    targets:
+      - select:
+          kind: Deployment
+          name: sample-api
+        fieldFields:
+          - spec.template.spec.containers.[name=api].image
+        options:
+          delimiter: '/'
+          index: 0
+
+  - source:
+      kind: ConfigMap
+      name: terraform-outputs-prod
+      fieldPath: data.KV_NAME
+    targets:
+      - select:
+          kind: SecretProviderClass
+          name: kv-secrets-workloads
+        fieldFields:
+          - spec.parameters.keyvaultName
+
+  - source:
+      kind: ConfigMap
+      name: terraform-outputs-prod
+      fieldPath: data.CLIENT_ID
+    targets:
+      - select:
+          kind: ServiceAccount
+          name: sa-sample-api
+        fieldFields:
+          - metadata.annotations.[azure.workload.identity/client-id]
+      - select:
+          kind: SecretProviderClass
+          name: kv-secrets-workloads
+        fieldFields:
+          - spec.parameters.clientID
+
+  - source:
+      kind: ConfigMap
+      name: terraform-outputs-prod
+      fieldPath: data.TENANT_ID
+    targets:
+      - select:
+          kind: SecretProviderClass
+          name: kv-secrets-workloads
+        fieldFields:
+          - spec.parameters.tenantId

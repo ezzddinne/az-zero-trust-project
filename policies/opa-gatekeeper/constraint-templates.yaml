@@ -1,0 +1,177 @@
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  OPA Gatekeeper Constraint Templates — Zero Trust Kubernetes    │
+# │  Enforces workload-level ZT controls inside the AKS cluster    │
+# └─────────────────────────────────────────────────────────────────┘
+#
+# Prerequisites:
+#   helm repo add gatekeeper https://open-policy-agent.github.io/gatekeeper/charts
+#   helm install gatekeeper gatekeeper/gatekeeper -n gatekeeper-system --create-namespace
+
+---
+# ──────────────────────────────────────────────────────────────────
+# ConstraintTemplate: Deny containers running as root
+# ──────────────────────────────────────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sdenyroot
+  annotations:
+    description: "Denies containers that run as root (UID 0)"
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sDenyRoot
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sdenyroot
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := sprintf("Container '%v' must set securityContext.runAsNonRoot=true | ZT: Verify Explicitly", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.runAsUser == 0
+          msg := sprintf("Container '%v' must not run as UID 0 | ZT: Least Privilege", [container.name])
+        }
+
+---
+# ──────────────────────────────────────────────────────────────────
+# ConstraintTemplate: Require resource limits
+# ──────────────────────────────────────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequireresourcelimits
+  annotations:
+    description: "Requires CPU and memory limits on all containers"
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequireResourceLimits
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequireresourcelimits
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.resources.limits.cpu
+          msg := sprintf("Container '%v' must define resources.limits.cpu | ZT: Assume Breach (limit blast radius)", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.resources.limits.memory
+          msg := sprintf("Container '%v' must define resources.limits.memory | ZT: Assume Breach (limit blast radius)", [container.name])
+        }
+
+---
+# ──────────────────────────────────────────────────────────────────
+# ConstraintTemplate: Deny privileged containers
+# ──────────────────────────────────────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sdenyprivileged
+  annotations:
+    description: "Denies privileged containers and privilege escalation"
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sDenyPrivileged
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sdenyprivileged
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.privileged
+          msg := sprintf("Container '%v' must not run as privileged | ZT: Least Privilege", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.allowPrivilegeEscalation
+          msg := sprintf("Container '%v' must set allowPrivilegeEscalation=false | ZT: Least Privilege", [container.name])
+        }
+
+---
+# ──────────────────────────────────────────────────────────────────
+# ConstraintTemplate: Require approved container registries
+# ──────────────────────────────────────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sallowedregistries
+  annotations:
+    description: "Only allows images from approved private registries"
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sAllowedRegistries
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            registries:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sallowedregistries
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not startswith_any(container.image, input.parameters.registries)
+          msg := sprintf("Container '%v' image '%v' is not from an approved registry. Allowed: %v | ZT: Verify Explicitly", [container.name, container.image, input.parameters.registries])
+        }
+
+        startswith_any(str, prefixes) {
+          prefix := prefixes[_]
+          startswith(str, prefix)
+        }
+
+---
+# ──────────────────────────────────────────────────────────────────
+# ConstraintTemplate: Require labels (owner, team)
+# ──────────────────────────────────────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredlabels
+  annotations:
+    description: "Requires specified labels on resources for auditability"
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredLabels
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            labels:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredlabels
+
+        violation[{"msg": msg}] {
+          required := input.parameters.labels[_]
+          not input.review.object.metadata.labels[required]
+          msg := sprintf("Resource must have label '%v' for audit trail | ZT: Verify Explicitly", [required])
+        }

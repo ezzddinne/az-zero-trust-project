@@ -1,0 +1,15 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: zero-trust
+  namespace: argocd
+spec:
+  description: Zero Trust Project
+  sourceRepos:
+    - git@github.com:YOUR_ORG/zero_trust.git
+  destinations:
+    - namespace: "*"
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"

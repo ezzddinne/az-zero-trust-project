@@ -1,0 +1,176 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubernetes-alerts
+  namespace: monitoring
+  labels:
+    monitoring: enabled
+    release: prometheus
+spec:
+  groups:
+    # Critical Alerts - Page Immediately
+    - name: critical
+      interval: 30s
+      rules:
+        - alert: NodeNotReady
+          expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Node {{ $labels.node }} is not ready"
+            description: "Node {{ $labels.node }} has been NotReady for more than 1 minute"
+            runbook_url: "https://runbooks.example.com/node-not-ready"
+
+        - alert: HighCPUUsage
+          expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "High CPU usage on {{ $labels.instance }}"
+            description: "CPU usage is above 80% for more than 5 minutes"
+
+        - alert: HighMemoryUsage
+          expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "High memory usage on {{ $labels.instance }}"
+            description: "Memory usage is above 85% for more than 5 minutes"
+
+        - alert: PodMemoryUsageHigh
+          expr: (sum(container_memory_working_set_bytes) by (pod, namespace) / sum(container_spec_memory_limit_bytes) by (pod, namespace)) > 0.9
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} using >90% memory"
+            description: "Pod is approaching its memory limit"
+
+        - alert: PodCrashLooping
+          expr: rate(kube_pod_container_status_restarts_total[15m]) > 0.1
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash looping"
+            description: "Pod is restarting frequently"
+
+        - alert: DeploymentReplicasMismatch
+          expr: kube_deployment_status_replicas_ready < kube_deployment_spec_replicas
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} replicas mismatch"
+            description: "Deployment has fewer ready replicas than desired"
+
+    # Warning Alerts - Notify Within Hours
+    - name: warnings
+      interval: 60s
+      rules:
+        - alert: PodNotReady
+          expr: kube_pod_status_condition{condition="Ready",status="true"} == 0
+          for: 3m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} not ready"
+            description: "Pod has been NotReady for more than 3 minutes"
+
+        - alert: PVCBoundPending
+          expr: kube_persistentvolumeclaim_status_phase{phase="Pending"} == 1
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is pending"
+            description: "PersistentVolumeClaim has been pending for more than 5 minutes"
+
+        - alert: JobFailed
+          expr: kube_job_failed == 1
+          for: 1m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Job {{ $labels.namespace }}/{{ $labels.job }} failed"
+            description: "Kubernetes job has failed"
+
+        - alert: CertificateExpiringSoon
+          expr: (kube_secret_info{type="kubernetes.io/tls"} / 86400) < 30
+          for: 1h
+          labels:
+            severity: warning
+            team: security
+          annotations:
+            summary: "Certificate expiring in {{ $value }} days"
+            description: "TLS certificate in namespace {{ $labels.namespace }} is expiring soon"
+
+        - alert: HighRequestErrorRate
+          expr: sum(rate(apiserver_request_total{status=~"5.."}[5m])) by (namespace) > 0.01
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "High 5xx error rate in {{ $labels.namespace }}"
+            description: "Namespace {{ $labels.namespace }} has high error rate"
+
+    # Security Alerts
+    - name: security
+      interval: 60s
+      rules:
+        - alert: RBACChange
+          expr: changes(kube_rolebinding_subjects[5m]) > 0
+          for: 1m
+          labels:
+            severity: warning
+            team: security
+          annotations:
+            summary: "RBAC change detected"
+            description: "RoleBinding change detected in {{ $labels.namespace }}"
+
+        - alert: SecretAccessed
+          expr: increase(kube_secret_info[1m]) > 0
+          for: 1m
+          labels:
+            severity: info
+            team: security
+          annotations:
+            summary: "Secret accessed"
+            description: "Secret {{ $labels.namespace }}/{{ $labels.name }} was accessed"
+
+    # Capacity Alerts
+    - name: capacity
+      interval: 60s
+      rules:
+        - alert: DiskSpaceLow
+          expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.1
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Low disk space on {{ $labels.instance }}"
+            description: "Disk space is below 10%"
+
+        - alert: PVCLargeUsage
+          expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) > 0.85
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is 85% full"
+            description: "Persistent volume is running out of space"

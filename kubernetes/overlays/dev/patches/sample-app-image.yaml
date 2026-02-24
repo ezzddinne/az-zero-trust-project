@@ -1,0 +1,17 @@
+# Patch: Replace ACR image placeholder with actual ACR URL
+# Usage: Update ACR_LOGIN_SERVER value before applying
+# kustomize edit set image sample-api=<acr>.azurecr.io/sample-api:latest
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-api
+  namespace: workloads
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          # This will be replaced via 'kustomize edit set image' command
+          # or manually update after terraform outputs ACR login server
+          image: acrztdeve85d83.azurecr.io/sample-api:v1.0.0

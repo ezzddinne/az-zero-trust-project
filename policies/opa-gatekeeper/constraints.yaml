@@ -1,0 +1,96 @@
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  OPA Gatekeeper Constraints — Applied to workloads namespace    │
+# │  Each Constraint activates a ConstraintTemplate                 │
+# └─────────────────────────────────────────────────────────────────┘
+
+---
+# 1. Deny root containers in workloads namespace
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sDenyRoot
+metadata:
+  name: deny-root-containers
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+    namespaces: ["workloads"]
+
+---
+# 2. Require resource limits on all workload containers
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequireResourceLimits
+metadata:
+  name: require-resource-limits
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+    namespaces: ["workloads"]
+
+---
+# 3. Deny privileged containers cluster-wide (except system namespaces)
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sDenyPrivileged
+metadata:
+  name: deny-privileged-containers
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+    excludedNamespaces:
+      - kube-system
+      - gatekeeper-system
+      - falco-system
+
+---
+# 4. Only allow images from our private ACR
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedRegistries
+metadata:
+  name: allowed-registries-only
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+    namespaces: ["workloads"]
+  parameters:
+    registries:
+      # Replace with your ACR login server — set during deployment
+      - "ztdevacr.azurecr.io/"
+      - "ztstagingacr.azurecr.io/"
+      - "ztprodacr.azurecr.io/"
+
+---
+# 5. Require team & owner labels for auditability
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: require-ownership-labels
+spec:
+  enforcementAction: warn    # Warn first, switch to deny after rollout
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+    namespaces: ["workloads"]
+  parameters:
+    labels:
+      - "app.kubernetes.io/name"
+      - "app.kubernetes.io/managed-by"
+      - "zero-trust.io/owner"

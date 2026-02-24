@@ -1,0 +1,146 @@
+# =============================================================
+# Scheduled Security Scan — Drift Detection + Vulnerability Scan
+# Zero Trust: Continuous Verification
+# =============================================================
+
+name: "Security Scan (Scheduled)"
+
+on:
+  schedule:
+    - cron: "0 2 * * *"  # Daily at 2 AM UTC
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  security-events: write
+
+env:
+  ARM_USE_OIDC: true
+  TF_VERSION: "1.6.0"
+
+jobs:
+  # ----- Terraform Drift Detection -----
+  drift-detection:
+    name: "Terraform Drift Detection"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: terraform init -backend-config=backend.hcl -input=false
+
+      - name: Terraform Plan (Drift Check)
+        id: drift
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: |
+          terraform plan -input=false -detailed-exitcode -no-color 2>&1 | tee drift.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          if [ $EXIT_CODE -eq 2 ]; then
+            echo "drift_detected=true" >> $GITHUB_OUTPUT
+            echo "## ⚠️ Drift Detected in ${{ matrix.environment }}" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat drift.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "drift_detected=false" >> $GITHUB_OUTPUT
+            echo "## ✅ No Drift in ${{ matrix.environment }}" >> $GITHUB_STEP_SUMMARY
+          fi
+        continue-on-error: true
+
+  # ----- IaC Security Scan -----
+  iac-scan:
+    name: "IaC Security Scan"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          soft_fail: true
+
+      - name: Upload Checkov results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform/
+          format: sarif
+          sarif_file: tfsec-results.sarif
+          soft_fail: true
+
+      - name: Upload tfsec results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: tfsec-results.sarif
+
+  # ----- Kubernetes Manifest Scan -----
+  k8s-scan:
+    name: "Kubernetes Manifest Scan"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan Kubernetes manifests with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "config"
+          scan-ref: "kubernetes/"
+          format: "sarif"
+          output: "k8s-trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+
+      - name: Upload K8s scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: k8s-trivy-results.sarif
+
+  # ----- Secret Scanning -----
+  secret-scan:
+    name: "Secret Leak Detection"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for secret scanning
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,218 @@
+# Falco Helm values — Runtime Threat Detection
+# Deployed via: helm install falco falcosecurity/falco -n falco-system -f values.yaml
+# Zero Trust: Assume Breach — detect attacks at runtime
+
+# Falco driver
+driver:
+  kind: modern_ebpf  # Modern eBPF is recommended (Falco 0.43+)
+
+# Resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Falco configuration
+falco:
+  # Output format
+  json_output: true
+  json_include_output_property: true
+
+  # Log level
+  log_level: info
+
+  # Priority filter — only alert on critical (reduce noise)
+  priority: critical
+
+# Custom rules for Zero Trust
+customRules:
+  zero-trust-rules.yaml: |-
+    # ================================================
+    # Zero Trust Custom Falco Rules
+    # ================================================
+
+    # Detect shell spawned in container (post-exploitation)
+    - rule: Shell Spawned in Container
+      desc: A shell was spawned in a container. This could indicate an attacker has gained access.
+      condition: >
+        spawned_process
+        and container
+        and proc.name in (bash, sh, dash, ash, zsh, csh, fish, ksh)
+        and not proc.pname in (supervisord, containerd-shim, runc)
+      output: >
+        Shell spawned in container
+        (user=%user.name container=%container.name shell=%proc.name
+        parent=%proc.pname cmdline=%proc.cmdline image=%container.image.repository
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: CRITICAL
+      tags: [shell, container, mitre_execution]
+
+    # Detect network scanning tools
+    - rule: Network Scanning Tool Detected
+      desc: Network scanning tool detected in container (nmap, ncat, etc.)
+      condition: >
+        spawned_process
+        and container
+        and proc.name in (nmap, ncat, nc, netcat, masscan, zmap)
+      output: >
+        Network scanning tool detected
+        (user=%user.name container=%container.name tool=%proc.name
+        cmdline=%proc.cmdline namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: CRITICAL
+      tags: [network, scanning, mitre_discovery]
+
+    # Detect crypto mining
+    - rule: Crypto Mining Detected
+      desc: Suspicious process that may be crypto mining
+      condition: >
+        spawned_process
+        and container
+        and (proc.name in (xmrig, minerd, cpuminer, minergate, ethminer)
+        or proc.cmdline contains "stratum+tcp"
+        or proc.cmdline contains "pool.minexmr")
+      output: >
+        Crypto mining detected
+        (user=%user.name container=%container.name process=%proc.name
+        cmdline=%proc.cmdline namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: CRITICAL
+      tags: [crypto, mining, mitre_resource_hijacking]
+
+    # Detect kubectl exec from unauthorized source
+    - rule: Unauthorized Kubectl Exec
+      desc: kubectl exec detected — verify legitimacy
+      condition: >
+        spawned_process
+        and container
+        and proc.pname = runc
+        and proc.name != pause
+        and k8s.ns.name = workloads
+      output: >
+        Process spawned via exec in workloads namespace
+        (user=%user.name container=%container.name process=%proc.name
+        cmdline=%proc.cmdline namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: NOTICE
+      tags: [exec, mitre_execution]
+
+    # Detect sensitive file access
+    - rule: Sensitive File Access in Container
+      desc: Access to sensitive files like /etc/shadow, /etc/passwd
+      condition: >
+        (open_read or evt.type=openat)
+        and container
+        and (fd.name startswith /etc/shadow
+        or fd.name startswith /etc/passwd
+        or fd.name startswith /proc/self/environ)
+      output: >
+        Sensitive file accessed in container
+        (user=%user.name container=%container.name file=%fd.name
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: WARNING
+      tags: [filesystem, mitre_credential_access]
+
+    # Detect outbound connection to non-standard port
+    - rule: Suspicious Outbound Connection
+      desc: Container making outbound connection to suspicious port
+      condition: >
+        (evt.type=connect or outbound)
+        and container
+        and not fd.sport in (53, 80, 443, 8080, 8443, 9090)
+        and not fd.sip = "0.0.0.0"
+        and not fd.sip = "127.0.0.1"
+        and k8s.ns.name = workloads
+      output: >
+        Suspicious outbound connection from container
+        (user=%user.name container=%container.name connection=%fd.name
+        port=%fd.sport namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: WARNING
+      tags: [network, mitre_exfiltration]
+
+    # Detect modification of /etc directory
+    - rule: Etc Directory Modified in Container
+      desc: File created or modified in /etc within container
+      condition: >
+        (open_write or evt.type=openat)
+        and container
+        and fd.name startswith /etc/
+        and not fd.directory in (/etc/kubernetes, /etc/cni)
+      output: >
+        /etc directory modified in container
+        (user=%user.name container=%container.name file=%fd.name
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: WARNING
+      tags: [filesystem, mitre_persistence]
+
+# Falco outputs
+falcosidekick:
+  enabled: true
+  replicas: 1
+  tolerations:
+    - effect: NoSchedule
+      operator: Exists
+    - effect: NoExecute
+      operator: Exists
+    - key: CriticalAddonsOnly
+      operator: Exists
+  config:
+    # Slack output
+    slack:
+      webhookurl: "REPLACE_WITH_YOUR_SLACK_WEBHOOK_URL"
+      channel: "#zero-trust-alerts"
+      minimumpriority: "critical"
+    
+    # Azure Monitor integration (logs sent via stdout to OMS agent)
+    customfields: "Environment:prod,Project:zero-trust"
+
+# Metrics for monitoring Falco itself
+metrics:
+  enabled: true
+  interval: 1h
+
+# Service monitor for Prometheus (if using kube-prometheus-stack)
+serviceMonitor:
+  enabled: true
+  prometheusNamespace: monitoring
+  selectors:
+    - matchLabels:
+        release: prometheus
+  interval: 30s
+
+# Tolerations for DaemonSet (run on ALL nodes including spot)
+tolerations:
+  - effect: NoSchedule
+    operator: Exists
+  - effect: NoExecute
+    operator: Exists
+
+# Node selector (optional - run on all nodes by default)
+nodeSelector: {}
+
+# Extra environment variables for Azure integration
+extraEnvVars:
+  - name: FALCO_HOSTNAME
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName
+  - name: FALCO_K8S_NODE_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName
+
+# Security context
+podSecurityContext:
+  runAsNonRoot: false  # Falco needs root for kernel access
+  fsGroup: 0
+
+containerSecurityContext:
+  privileged: true  # Required for eBPF/kernel module
+  readOnlyRootFilesystem: false  # Falco writes to /var/run
+  allowPrivilegeEscalation: true
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - SYS_ADMIN    # Required for eBPF
+      - SYS_RESOURCE # Required for memory locks
+      - SYS_PTRACE   # Required for process tracing

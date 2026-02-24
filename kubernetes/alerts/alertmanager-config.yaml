@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: slack-webhooks
+  namespace: monitoring
+type: Opaque
+stringData:
+  default: "REPLACE_WITH_YOUR_SLACK_WEBHOOK_URL"
+  critical: "REPLACE_WITH_YOUR_SLACK_WEBHOOK_URL"
+  warning: "REPLACE_WITH_YOUR_SLACK_WEBHOOK_URL"
+  security: "REPLACE_WITH_YOUR_SLACK_WEBHOOK_URL"
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: alert-config
+  namespace: monitoring
+  labels:
+    monitoring: enabled
+spec:
+  route:
+    groupBy: ['namespace', 'alertname', 'severity']
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 12h
+    receiver: 'default'
+    routes:
+      - matchers:
+          - name: severity
+            value: critical
+        receiver: 'critical-alerts'
+        continue: true
+      - matchers:
+          - name: severity
+            value: warning
+        receiver: 'warning-alerts'
+        continue: true
+      - matchers:
+          - name: team
+            value: security
+        receiver: 'security-alerts'
+
+  receivers:
+    - name: 'default'
+      slackConfigs:
+        - channel: '#zero-trust-grafana'
+          sendResolved: true
+          apiURL:
+            name: slack-webhooks
+            key: default
+          title: 'Zero Trust Alerts'
+          text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+          color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+
+    - name: 'critical-alerts'
+      slackConfigs:
+        - channel: '#critical-alerts'
+          sendResolved: true
+          apiURL:
+            name: slack-webhooks
+            key: critical
+          title: 'CRITICAL: Zero Trust Alerts'
+          text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+          color: 'danger'
+
+    - name: 'warning-alerts'
+      slackConfigs:
+        - channel: '#warnings'
+          sendResolved: true
+          apiURL:
+            name: slack-webhooks
+            key: warning
+          title: 'WARNING: Zero Trust Alerts'
+
+    - name: 'security-alerts'
+      slackConfigs:
+        - channel: '#security'
+          sendResolved: true
+          apiURL:
+            name: slack-webhooks
+            key: security
+          title: 'SECURITY: Zero Trust Alerts'
+          color: 'warning'

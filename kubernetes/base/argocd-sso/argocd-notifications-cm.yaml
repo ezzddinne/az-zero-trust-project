@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  service.slack: |
+    token: $argocd-slack-bot:bot-token
+  trigger.on-deployed: |
+    - when: app.status.operationState.phase == 'Succeeded'
+      send:
+        - on-deployed
+  trigger.on-health-degraded: |
+    - when: app.status.health.status == 'Degraded'
+      send:
+        - on-health-degraded
+  template.on-deployed: |
+    slack:
+      attachments: |
+        [{"color": "#18be52", "title": "Application Deployed", "fields": [
+          {"title": "Application", "value": "{{.app.metadata.name}}", "short": true},
+          {"title": "Environment", "value": "{{.app.metadata.labels.environment}}", "short": true},
+          {"title": "Revision", "value": "{{.app.status.operationState.revision}}", "short": true}
+        ]}]
+  template.on-health-degraded: |
+    slack:
+      attachments: |
+        [{"color": "#f00", "title": "Health Degraded", "fields": [
+          {"title": "Application", "value": "{{.app.metadata.name}}", "short": true},
+          {"title": "Health Status", "value": "{{.app.status.health.status}}", "short": true}
+        ]}]

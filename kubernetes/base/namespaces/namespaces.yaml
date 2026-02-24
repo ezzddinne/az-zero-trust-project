@@ -1,0 +1,56 @@
+# Namespace: workloads
+# Pod Security Standards: restricted (enforce)
+# Zero Trust: Least Privilege — containers run with minimal capabilities
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: workloads
+  labels:
+    # Pod Security Admission — enforce restricted profile
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    # Custom labels
+    environment: prod
+    managed-by: terraform
+---
+# Namespace: monitoring
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    environment: prod
+    managed-by: terraform
+---
+# Namespace: falco-system
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: falco-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+    # Falco requires privileged access for syscall monitoring
+    environment: prod
+    managed-by: terraform
+---
+# Namespace: ingress
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    environment: prod
+    managed-by: terraform
