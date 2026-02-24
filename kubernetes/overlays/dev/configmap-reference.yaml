@@ -19,6 +19,6 @@ metadata:
 data:
   ACR_LOGIN: "acrztdeve85d83.azurecr.io"
   KV_NAME: "kv-zt-dev-e85d83"
-  CLIENT_ID: "62062027-2e4d-4bba-bd41-7f8ae8dd34c3"
-  TENANT_ID: "2538d496-062c-4cae-a709-a24873f4a14c"
+  CLIENT_ID: "REPLACE_WITH_YOUR_CLIENT_ID"
+  TENANT_ID: "REPLACE_WITH_YOUR_TENANT_ID"
   ENVIRONMENT: "dev"
